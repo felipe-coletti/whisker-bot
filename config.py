@@ -21,6 +21,7 @@ STATUSES = [
     "Ka-Boom!",
     "Kaboom!",
     "Kapow!",
-    "Peaw!",
+    "Mwah!",
+    "Pew!",
     "Pow!"
 ]
