@@ -10,7 +10,8 @@ class Levels(commands.Cog):
     @commands.slash_command(name="level", description="Check your activity level.")
     async def level(self, ctx):
         user_id = ctx.user.id
-        xp = get_user_xp(user_id)
+        guild_id = ctx.guild.id
+        xp = get_user_xp(user_id, guild_id)
         level = xp // 10
 
         await ctx.response.send_message(f"📊 **{ctx.user.name}**, you are **Level {level}** (XP: {xp}) in Whisker! Keep participating! 🐾")
@@ -18,15 +19,17 @@ class Levels(commands.Cog):
 
     @commands.slash_command(name="rank", description="List the top 10 most active users.")
     async def rank(self, ctx):
-        top_10 = get_top_users(10)
+        guild_id = ctx.guild.id
+        
+        top_10 = get_top_users(guild_id, 10)
         
         if not top_10:
-            await ctx.response.send_message("📭 No XP data registered yet. Be the first to participate!", ephemeral=True)
+            await ctx.response.send_message("📭 No XP data registered yet in this server. Be the first to participate!", ephemeral=True)
             return
 
         embed = discord.Embed(
             title="🏆 Top 10 Most Active",
-            description="Users with the most XP in the server!",
+            description=f"Users with the most XP in **{ctx.guild.name}**!",
             color=discord.Color.gold()
         )
         
@@ -52,7 +55,6 @@ class Levels(commands.Cog):
         
         if first_user_id:
             member = self.bot.get_user(first_user_id)
-
             if member:
                 embed.set_thumbnail(url=member.display_avatar.url)
             else:
@@ -70,7 +72,11 @@ class Levels(commands.Cog):
         if message.author.bot:
             return
         
-        add_xp(message.author.id, 1)
+        guild_id = message.guild.id if message.guild else 0
+        if guild_id == 0:
+            return
+            
+        add_xp(message.author.id, guild_id, 1)
 
 
 def setup(bot):

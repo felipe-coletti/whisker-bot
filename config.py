@@ -5,6 +5,7 @@ import os
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DB_NAME = os.getenv("DB_NAME")
 
 PREFIX = "/"
 INTENTS = discord.Intents.default()
