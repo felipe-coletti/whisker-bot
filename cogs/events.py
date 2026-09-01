@@ -22,13 +22,18 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
+        if member.bot:
+            return
+        
         channel = member.guild.system_channel
+
         if channel:
             welcome_message = (
                 f"👋 Welcome, **{member.name}**!\n"
                 f"**Whisker** is happy to have you here. 🐾\n"
                 f"Use `/help` to see what I can do!"
             )
+
             await channel.send(welcome_message)
 
 
