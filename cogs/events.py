@@ -14,8 +14,9 @@ class Events(commands.Cog):
         print(f'📡 Connected to {len(self.bot.guilds)} servers.')
         
         status = random.choice(STATUSES)
+
         await self.bot.change_presence(
-            activity=discord.Activity(type=discord.ActivityType.watching, name=status)
+            activity=discord.CustomActivity(name=status)
         )
 
 
