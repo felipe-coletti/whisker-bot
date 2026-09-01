@@ -27,14 +27,27 @@ class Events(commands.Cog):
         
         channel = member.guild.system_channel
 
-        if channel:
-            welcome_message = (
-                f"👋 Welcome, **{member.name}**!\n"
-                f"**Whisker** is happy to have you here. 🐾\n"
-                f"Use `/help` to see what I can do!"
-            )
+        if not channel:
+            return
+        
+        welcome_message = f"👋 Welcome, **{member.name}**!"
 
-            await channel.send(welcome_message)
+        await channel.send(welcome_message)
+
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member):
+        if member.bot:
+            return
+        
+        channel = member.guild.system_channel
+
+        if not channel:
+            return
+        
+        goodbye_message = f"👋 Bye, **{member.name}**! See you soon."
+
+        await channel.send(goodbye_message)
 
 
 def setup(bot):
