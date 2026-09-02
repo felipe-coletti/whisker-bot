@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import random
 from config import STATUSES
 
@@ -12,12 +12,22 @@ class Events(commands.Cog):
     async def on_ready(self):
         print(f'✅ Whisker is online as {self.bot.user.name}!')
         print(f'📡 Connected to {len(self.bot.guilds)} servers.')
-        
-        status = random.choice(STATUSES)
+
+        self.update_status.start()
+
+
+    @tasks.loop(seconds=60)
+    async def update_status(self):
+        status_text = random.choice(STATUSES)
 
         await self.bot.change_presence(
-            activity=discord.CustomActivity(name=status)
+            activity=discord.CustomActivity(name=status_text)
         )
+
+
+    @update_status.before_loop
+    async def before_update_status(self):
+        await self.bot.wait_until_ready()
 
 
     @commands.Cog.listener()

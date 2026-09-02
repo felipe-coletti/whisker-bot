@@ -24,5 +24,6 @@ STATUSES = [
     "Kapow!",
     "Mwah!",
     "Pew!",
-    "Pow!"
+    "Pow!",
+    "Rawr!"
 ]
