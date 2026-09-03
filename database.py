@@ -7,12 +7,14 @@ DB_NAME = "whisker.db"
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
+    
     return conn
 
 
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS xp (
             user_id INTEGER,
@@ -21,8 +23,27 @@ def init_db():
             PRIMARY KEY (user_id, guild_id)
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS economy (
+            user_id INTEGER,
+            guild_id INTEGER,
+            coins INTEGER DEFAULT 0,
+            last_daily_claim TIMESTAMP,
+            PRIMARY KEY (user_id, guild_id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            guild_id INTEGER,
+            item TEXT,
+            PRIMARY KEY (user_id, guild_id, item)
+        )
+    ''')
+
     conn.commit()
     conn.close()
+
     print("✅ Database initialized.")
 
 
@@ -84,3 +105,21 @@ def calculate_level_and_progress(xp):
     if progress > 100: progress = 100
     
     return level, int(progress), int(xp_for_next_level - xp)
+
+
+def add_reward(self, user_id, guild_id, amount):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
+        row = cursor.fetchone()
+        current_coins = row[0] if row else 0
+        new_coins = current_coins + amount
+        
+        if row:
+            cursor.execute("UPDATE economy SET coins = ? WHERE user_id = ? AND guild_id = ?", (new_coins, user_id, guild_id))
+        else:
+            cursor.execute("INSERT INTO economy (user_id, guild_id, coins) VALUES (?, ?, ?)", (user_id, guild_id, new_coins))
+        
+        conn.commit()
+        conn.close()
