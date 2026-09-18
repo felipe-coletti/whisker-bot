@@ -1,5 +1,5 @@
 import sqlite3
-import os
+from datetime import datetime
 
 DB_NAME = "whisker.db"
 
@@ -7,7 +7,7 @@ DB_NAME = "whisker.db"
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
-    
+
     return conn
 
 
@@ -15,15 +15,16 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute('''
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS xp (
             user_id INTEGER,
             guild_id INTEGER,
             xp INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, guild_id)
         )
-    ''')
-    cursor.execute('''
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS economy (
             user_id INTEGER,
             guild_id INTEGER,
@@ -31,15 +32,38 @@ def init_db():
             last_daily_claim TIMESTAMP,
             PRIMARY KEY (user_id, guild_id)
         )
-    ''')
-    cursor.execute('''
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
             user_id INTEGER,
             guild_id INTEGER,
             item TEXT,
+            quantity INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (user_id, guild_id, item)
         )
-    ''')
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pets (
+            user_id INTEGER,
+            guild_id INTEGER,
+            pet TEXT,
+            equipped INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, guild_id, pet)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS active_boosters (
+            user_id INTEGER,
+            guild_id INTEGER,
+            effect TEXT,
+            multiplier INTEGER NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (user_id, guild_id, effect)
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -47,18 +71,91 @@ def init_db():
     print("✅ Database initialized.")
 
 
-def add_xp(user_id, guild_id, amount):
+def get_booster_multiplier(user_id, guild_id, effect):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT xp FROM xp WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
+
+    cursor.execute(
+        """
+        SELECT multiplier, expires_at
+        FROM active_boosters
+        WHERE user_id = ? AND guild_id = ? AND effect = ?
+        """,
+        (user_id, guild_id, effect)
+    )
+
     row = cursor.fetchone()
-    
+
+    if not row:
+        conn.close()
+        return 1
+
+    expires_at = datetime.fromisoformat(row["expires_at"])
+
+    if expires_at <= datetime.now():
+        cursor.execute(
+            """
+            DELETE FROM active_boosters
+            WHERE user_id = ? AND guild_id = ? AND effect = ?
+            """,
+            (user_id, guild_id, effect)
+        )
+
+        conn.commit()
+        conn.close()
+
+        return 1
+
+    multiplier = row["multiplier"]
+
+    conn.close()
+
+    return multiplier
+
+
+def add_xp(user_id, guild_id, amount):
+    multiplier = get_booster_multiplier(
+        user_id,
+        guild_id,
+        "xp"
+    )
+
+    amount *= multiplier
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT xp
+        FROM xp
+        WHERE user_id = ? AND guild_id = ?
+        """,
+        (user_id, guild_id)
+    )
+
+    row = cursor.fetchone()
+
     if row:
-        new_xp = row['xp'] + amount
-        cursor.execute("UPDATE xp SET xp = ? WHERE user_id = ? AND guild_id = ?", (new_xp, user_id, guild_id))
+        new_xp = row["xp"] + amount
+
+        cursor.execute(
+            """
+            UPDATE xp
+            SET xp = ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (new_xp, user_id, guild_id)
+        )
     else:
-        cursor.execute("INSERT INTO xp (user_id, guild_id, xp) VALUES (?, ?, ?)", (user_id, guild_id, amount))
-    
+        cursor.execute(
+            """
+            INSERT INTO xp (user_id, guild_id, xp)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, guild_id, amount)
+        )
+
     conn.commit()
     conn.close()
 
@@ -66,60 +163,153 @@ def add_xp(user_id, guild_id, amount):
 def get_user_xp(user_id, guild_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT xp FROM xp WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
+
+    cursor.execute(
+        """
+        SELECT xp
+        FROM xp
+        WHERE user_id = ? AND guild_id = ?
+        """,
+        (user_id, guild_id)
+    )
+
     row = cursor.fetchone()
+
     conn.close()
-    return row['xp'] if row else 0
+
+    return row["xp"] if row else 0
 
 
 def get_top_users(guild_id, limit=10):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, xp FROM xp WHERE guild_id = ? ORDER BY xp DESC LIMIT ?", (guild_id, limit))
+
+    cursor.execute(
+        """
+        SELECT user_id, xp
+        FROM xp
+        WHERE guild_id = ?
+        ORDER BY xp DESC
+        LIMIT ?
+        """,
+        (guild_id, limit)
+    )
+
     rows = cursor.fetchall()
+
     conn.close()
-    return [(row['user_id'], row['xp']) for row in rows]
+
+    return [
+        (row["user_id"], row["xp"])
+        for row in rows
+    ]
 
 
 def calculate_level_and_progress(xp):
     level = 0
     current_xp = 0
     next_xp = 100
-    
+
     while xp >= next_xp:
         level += 1
         current_xp = next_xp
         next_xp = 100 * (level + 1) * (level + 2) / 2
-        
-    xp_for_current_level = 100 * level * (level + 1) / 2 if level > 0 else 0
-    
-    xp_for_next_level = 100 * (level + 1) * (level + 2) / 2
-    
-    progress = 0
-    
+
+    xp_for_current_level = (
+        100 * level * (level + 1) / 2
+        if level > 0
+        else 0
+    )
+
+    xp_for_next_level = (
+        100 * (level + 1) * (level + 2) / 2
+    )
+
     if level > 0:
-        progress = ((xp - xp_for_current_level) / (xp_for_next_level - xp_for_current_level)) * 100
+        progress = (
+            (xp - xp_for_current_level)
+            / (xp_for_next_level - xp_for_current_level)
+        ) * 100
     else:
         progress = (xp / 100) * 100
-    
-    if progress > 100: progress = 100
-    
-    return level, int(progress), int(xp_for_next_level - xp)
+
+    if progress > 100:
+        progress = 100
+
+    return (
+        level,
+        int(progress),
+        int(xp_for_next_level - xp)
+    )
 
 
-def add_reward(self, user_id, guild_id, amount):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
-        row = cursor.fetchone()
-        current_coins = row[0] if row else 0
-        new_coins = current_coins + amount
-        
-        if row:
-            cursor.execute("UPDATE economy SET coins = ? WHERE user_id = ? AND guild_id = ?", (new_coins, user_id, guild_id))
-        else:
-            cursor.execute("INSERT INTO economy (user_id, guild_id, coins) VALUES (?, ?, ?)", (user_id, guild_id, new_coins))
-        
-        conn.commit()
-        conn.close()
+def add_reward(user_id, guild_id, amount):
+    multiplier = get_booster_multiplier(
+        user_id,
+        guild_id,
+        "coins"
+    )
+
+    reward = amount * multiplier
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT coins
+        FROM economy
+        WHERE user_id = ? AND guild_id = ?
+        """,
+        (user_id, guild_id)
+    )
+
+    row = cursor.fetchone()
+
+    current_coins = row["coins"] if row else 0
+    new_coins = current_coins + reward
+
+    if row:
+        cursor.execute(
+            """
+            UPDATE economy
+            SET coins = ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (new_coins, user_id, guild_id)
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO economy (user_id, guild_id, coins)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, guild_id, new_coins)
+        )
+
+    conn.commit()
+    conn.close()
+
+    return reward
+
+
+def get_equipped_pet(user_id, guild_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT pet
+        FROM pets
+        WHERE user_id = ?
+          AND guild_id = ?
+          AND equipped = 1
+        """,
+        (user_id, guild_id)
+    )
+
+    pet = cursor.fetchone()
+
+    conn.close()
+
+    return pet["pet"] if pet else None

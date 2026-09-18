@@ -29,12 +29,80 @@ STATUSES = [
     "Rawr!"
 ]
 
-DAILY_COINS = 500
-LEVEL_REWARD = 100
+DAILY_COINS = 100
+LEVEL_COINS = 500
 
 shop_items = [
-    {"name": "🐀 Rat", "description": "A cute little rat", "tag": "rat", "cost": 50, "type": "pet"},
-    {"name": "Coin Booster", "description": "Double your XP for 1 hour", "tag": "coin_booster", "cost": 500, "type": "booster"},
-    {"name": "XP Booster", "description": "Double your coins for 1 hour", "tag": "xp_booster", "cost": 500, "type": "booster"},
-    {"name": "Ultimate Booster", "description": "Double your coins and XP for 24 hours", "tag": "ultimate_booster", "cost": 3000, "type": "booster"},
+    {
+        "name": "Rat",
+        "emoji": "🐀",
+        "description": "A cute little rat",
+        "tag": "rat",
+        "cost": 50,
+        "type": "pet",
+        "effects": {
+            "daily": 5,
+        },
+    },
+    {
+        "name": "Coin Booster",
+        "emoji": "🪙",
+        "description": "Double your coins for 1 hour",
+        "tag": "coin_booster",
+        "cost": 500,
+        "type": "booster",
+        "duration": 3600,
+        "effects": {
+            "coins": 2,
+        },
+    },
+    {
+        "name": "Mega Coin Booster",
+        "emoji": "🪙",
+        "description": "Triple your coins for 2 hours",
+        "tag": "mega_coin_booster",
+        "cost": 1500,
+        "type": "booster",
+        "duration": 7200,
+        "effects": {
+            "coins": 3,
+        },
+    },
+    {
+        "name": "XP Booster",
+        "emoji": "✨",
+        "description": "Double your XP for 1 hour",
+        "tag": "xp_booster",
+        "cost": 500,
+        "type": "booster",
+        "duration": 3600,
+        "effects": {
+            "xp": 2,
+        },
+    },
+    {
+        "name": "Mega XP Booster",
+        "emoji": "✨",
+        "description": "Triple your XP for 2 hours",
+        "tag": "mega_xp_booster",
+        "cost": 1500,
+        "type": "booster",
+        "duration": 7200,
+        "effects": {
+            "xp": 3,
+        },
+    },
+    {
+        "name": "Ultimate Booster",
+        "emoji": "💎",
+        "description": "Triple your coins and XP for 24 hours",
+        "tag": "ultimate_booster",
+        "cost": 5000,
+        "type": "booster",
+        "duration": 86400,
+        "effects": {
+            "coins": 3,
+            "xp": 3,
+        },
+    },
 ]

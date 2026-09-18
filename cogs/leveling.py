@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from config import LEVEL_REWARD
+from config import LEVEL_COINS
 from database import get_user_xp, get_top_users, calculate_level_and_progress, add_xp, add_reward
 
 class XP(commands.Cog):
@@ -150,9 +150,13 @@ class XP(commands.Cog):
         new_level, _, _ = calculate_level_and_progress(new_xp)
         
         if new_level > old_level:
-            add_reward(user_id, guild_id, LEVEL_REWARD)
+            reward = add_reward(
+                user_id,
+                guild_id,
+                LEVEL_COINS * new_level
+            )
 
-            await message.channel.send(f"🎉 **{message.author.name}** leveled up to **Level {new_level}**! Earned **{LEVEL_REWARD} coins**! 💰")
+            await message.channel.send(f"🎉 **{message.author.name}** leveled up to **Level {new_level}**! Earned **{reward} coins**! 💰")
 
 
 def setup(bot):

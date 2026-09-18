@@ -1,192 +1,742 @@
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+
 from config import DAILY_COINS, shop_items
-from database import get_db_connection
+from database import get_booster_multiplier, get_db_connection, get_equipped_pet
+
 
 class Economy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    shop_group = discord.SlashCommandGroup("shop", "Commands related to the item shop.")
+    # =========================
+    # SHOP
+    # =========================
 
+    shop = discord.SlashCommandGroup("shop", "Shop commands")
 
-    @shop_group.command(name="view", description="View the item shop.")
+    @shop.command(name="view", description="View the shop")
     async def shop_view(self, ctx):
-        embed = discord.Embed(title="🛒 Whisker Shop", color=discord.Color.purple())
-        embed.description = "Buy exclusive items with your coins!"
-        
-        for item in shop_items:
-            embed.add_field(name=f"{item['name']} [{item['tag']}]", value=f"💰 {item['cost']} coins\n{item['description']}", inline=False)
-        
-        embed.set_footer(text="Use `/shop buy [item]` to buy items!")
-
-        await ctx.response.send_message(embed=embed)
-
-
-    @shop_group.command(name="buy", description="Buy an item.")
-    async def shop_buy(self, ctx, item_name: str):
-        user_id = ctx.user.id
-        guild_id = ctx.guild.id
-        
-        item_key = item_name.lower()
-        item = next((x for x in shop_items if x["tag"] == item_key), None)
-
-        if item is None:
-            return await ctx.response.send_message("❌ Item not found in the shop. Use `/shop` to view the list.", ephemeral=True)
-        
-        cost = item["cost"]
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
-
-        row = cursor.fetchone()
-
-        if not row or row[0] < cost:
-            conn.close()
-
-            return await ctx.response.send_message(f"❌ You don't have enough coins! Cost: {cost}", ephemeral=True)
-        
-        new_coins = row[0] - cost
-
-        cursor.execute("UPDATE economy SET coins = ? WHERE user_id = ? AND guild_id = ?", (new_coins, user_id, guild_id))
-        cursor.execute("INSERT OR REPLACE INTO inventory (user_id, guild_id, item) VALUES (?, ?, ?)", (user_id, guild_id, item_key))
-        
-        conn.commit()
-        conn.close()
-        
-        await ctx.response.send_message(f"✅ You bought **{item_name}**! 🎉")
-
-
-    @commands.slash_command(name="daily", description="Claim your daily coins.")
-    async def daily(self, ctx):
-        user_id = ctx.user.id
-        guild_id = ctx.guild.id
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT last_daily_claim FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
-        row = cursor.fetchone()
-        
-        if row and row[0]:
-            last_daily = datetime.fromisoformat(row[0])
-
-            if datetime.now() - last_daily < timedelta(hours=24):
-                time_left = (last_daily + timedelta(hours=24)) - datetime.now()
-                
-                return await ctx.response.send_message(f"⏰ You've already claimed your daily coins today! Come back in {time_left} for the next reward.", ephemeral=True)
-        
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
-        row = cursor.fetchone()
-        current_coins = row[0] if row else 0
-        new_coins = current_coins + DAILY_COINS
-        
-        cursor.execute("UPDATE economy SET coins = ?, last_daily_claim = ? WHERE user_id = ? AND guild_id = ?",
-            (new_coins, datetime.now().isoformat(), user_id, guild_id))
-        
-        if not row:
-            cursor.execute("INSERT INTO economy (user_id, guild_id, coins, last_daily_claim) VALUES (?, ?, ?, ?)",
-                (user_id, guild_id, DAILY_COINS, datetime.now().isoformat()))
-        
-        conn.commit()
-        conn.close()
-        
-        await ctx.response.send_message(f"🎉 **{ctx.user.name}**, you received **{DAILY_COINS} coins**!")
-
-
-    @commands.slash_command(name="balance", description="Check your coin balance.")
-    async def balance(self, ctx):
-        user_id = ctx.user.id
-        guild_id = ctx.guild.id
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
-        row = cursor.fetchone()
-        conn.close()
-        
-        coins = row[0] if row else 0
-
         embed = discord.Embed(
-            title=f"💰 **{ctx.user.name}**'s Balance",
+            title="🛒 Shop",
+            description="Buy items with your coins.",
             color=discord.Color.gold()
         )
 
-        embed.add_field(name="Coins", value=f"🪙 **{coins}**", inline=False)
+        for item in shop_items:
+            embed.add_field(
+                name=f'{item["emoji"]} {item["name"]} — {item["cost"]} coins',
+                value=f'`{item["tag"]}`\n{item["description"]}',
+                inline=False
+            )
 
-        await ctx.response.send_message(embed=embed)
+        await ctx.respond(embed=embed)
 
+    @shop.command(name="buy", description="Buy an item from the shop")
+    async def shop_buy(self, ctx, item: str):
+        item_data = next(
+            (shop_item for shop_item in shop_items if shop_item["tag"] == item),
+            None
+        )
 
-    @commands.slash_command(name="pay", description="Transfer coins to another user.")
-    async def pay(self, ctx, amount: int, user: discord.User):
-        if amount <= 0:
-            return await ctx.response.send_message("❌ Invalid amount.", ephemeral=True)
-        
-        sender_id = ctx.user.id
-        receiver_id = user.id
-        guild_id = ctx.guild.id
-        
-        if sender_id == receiver_id:
-            return await ctx.response.send_message("❌ You cannot transfer to yourself.", ephemeral=True)
-        
+        if item_data is None:
+            await ctx.respond("❌ Item not found.")
+            return
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (sender_id, guild_id))
-        sender_row = cursor.fetchone()
-        
-        if not sender_row or sender_row[0] < amount:
+
+        # Make sure the user exists in the economy table.
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO economy (user_id, guild_id, coins)
+            VALUES (?, ?, 0)
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        cursor.execute(
+            """
+            SELECT coins
+            FROM economy
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        user = cursor.fetchone()
+
+        if user["coins"] < item_data["cost"]:
             conn.close()
-            return await ctx.response.send_message(f"❌ You don't have enough coins! (Balance: {sender_row[0] if sender_row else 0})", ephemeral=True)
-        
-        cursor.execute("SELECT coins FROM economy WHERE user_id = ? AND guild_id = ?", (receiver_id, guild_id))
-        receiver_row = cursor.fetchone()
-        receiver_coins = receiver_row[0] if receiver_row else 0
-        
-        new_sender = sender_row[0] - amount
-        new_receiver = receiver_coins + amount
-        
-        if sender_row:
-            cursor.execute("UPDATE economy SET coins = ? WHERE user_id = ? AND guild_id = ?", (new_sender, sender_id, guild_id))
+
+            await ctx.respond(
+                f'❌ You need {item_data["cost"]} coins to buy '
+                f'{item_data["name"]}.'
+            )
+            return
+
+        # =========================
+        # PET
+        # =========================
+
+        if item_data["type"] == "pet":
+            # A user can own multiple different pets,
+            # but cannot own the same pet twice.
+            cursor.execute(
+                """
+                SELECT 1
+                FROM pets
+                WHERE user_id = ?
+                  AND guild_id = ?
+                  AND pet = ?
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    item_data["tag"]
+                )
+            )
+
+            if cursor.fetchone() is not None:
+                conn.close()
+
+                await ctx.respond(
+                    f'❌ You already own the {item_data["name"]}.'
+                )
+                return
+
+            # If this is the user's first pet, equip it automatically.
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM pets
+                WHERE user_id = ? AND guild_id = ?
+                """,
+                (ctx.author.id, ctx.guild.id)
+            )
+
+            pet_count = cursor.fetchone()[0]
+            equipped = 1 if pet_count == 0 else 0
+
+            cursor.execute(
+                """
+                INSERT INTO pets (
+                    user_id,
+                    guild_id,
+                    pet,
+                    equipped
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    item_data["tag"],
+                    equipped
+                )
+            )
+
+        # =========================
+        # NORMAL ITEM
+        # =========================
+
         else:
-            cursor.execute("INSERT INTO economy (user_id, guild_id, coins) VALUES (?, ?, ?)", (sender_id, guild_id, new_sender))
-            
-        if receiver_row:
-            cursor.execute("UPDATE economy SET coins = ? WHERE user_id = ? AND guild_id = ?", (new_receiver, receiver_id, guild_id))
-        else:
-            cursor.execute("INSERT INTO economy (user_id, guild_id, coins) VALUES (?, ?, ?)", (receiver_id, guild_id, new_receiver))
-            
+            cursor.execute(
+                """
+                INSERT INTO inventory (
+                    user_id,
+                    guild_id,
+                    item,
+                    quantity
+                )
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(user_id, guild_id, item)
+                DO UPDATE SET quantity = quantity + 1
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    item_data["tag"]
+                )
+            )
+
+        # Remove the coins after the purchase.
+        cursor.execute(
+            """
+            UPDATE economy
+            SET coins = coins - ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (
+                item_data["cost"],
+                ctx.author.id,
+                ctx.guild.id
+            )
+        )
+
         conn.commit()
         conn.close()
-        
-        await ctx.response.send_message(f"✅ Transfer complete! You sent **{amount} coins** to **{user.name}**.", ephemeral=True)
 
+        await ctx.respond(
+            f'✅ You bought **{item_data["name"]}** for '
+            f'**{item_data["cost"]} coins**!'
+        )
 
-    @commands.slash_command(name="inventory", description="View your items.")
-    async def inventory(self, ctx):
-        user_id = ctx.user.id
-        guild_id = ctx.guild.id
-        
+    # =========================
+    # DAILY
+    # =========================
+
+    @discord.slash_command(
+        name="daily",
+        description="Claim your daily coins"
+    )
+    async def daily(self, ctx):
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT item FROM inventory WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
 
-        items = cursor.fetchall()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO economy (
+                user_id,
+                guild_id,
+                coins
+            )
+            VALUES (?, ?, 0)
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        cursor.execute(
+            """
+            SELECT coins, last_daily_claim
+            FROM economy
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        user = cursor.fetchone()
+
+        now = datetime.now()
+
+        if user["last_daily_claim"]:
+            last_claim = datetime.fromisoformat(
+                user["last_daily_claim"]
+            )
+
+            elapsed = now - last_claim
+
+            if elapsed < timedelta(days=1):
+                remaining = timedelta(days=1) - elapsed
+
+                hours = remaining.seconds // 3600
+                minutes = (remaining.seconds % 3600) // 60
+
+                conn.close()
+
+                await ctx.respond(
+                    f"⏳ You already claimed your daily reward.\n"
+                    f"Come back in **{hours}h {minutes}m**."
+                )
+                return
+
+        pet_bonus = 0
+
+        equipped_pet = get_equipped_pet(
+            ctx.author.id,
+            ctx.guild.id
+        )
+
+        if equipped_pet:
+            pet_data = next(
+                (
+                    shop_item
+                    for shop_item in shop_items
+                    if shop_item["tag"] == equipped_pet
+                ),
+                None
+            )
+
+            if pet_data:
+                pet_bonus = pet_data.get(
+                    "effects",
+                    {}
+                ).get("daily", 0)
+
+        multiplier = get_booster_multiplier(
+            ctx.author.id,
+            ctx.guild.id,
+            "coins"
+        )
+
+        reward = (DAILY_COINS + pet_bonus) * multiplier
+
+        cursor.execute(
+            """
+            UPDATE economy
+            SET coins = coins + ?,
+                last_daily_claim = ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (
+                reward,
+                now.isoformat(),
+                ctx.author.id,
+                ctx.guild.id
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        await ctx.respond(
+            f"💰 You received **{reward} coins**!"
+        )
+
+    # =========================
+    # BALANCE
+    # =========================
+
+    @discord.slash_command(
+        name="balance",
+        description="Check your coin balance"
+    )
+    async def balance(self, ctx):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT coins
+            FROM economy
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        user = cursor.fetchone()
+        conn.close()
+
+        coins = user["coins"] if user else 0
+
+        await ctx.respond(
+            f"💰 You have **{coins} coins**."
+        )
+
+    # =========================
+    # PAY
+    # =========================
+
+    @discord.slash_command(
+        name="pay",
+        description="Give coins to another user"
+    )
+    async def pay(
+        self,
+        ctx,
+        member: discord.Member,
+        amount: int
+    ):
+        if amount <= 0:
+            await ctx.respond(
+                "❌ The amount must be greater than zero."
+            )
+            return
+
+        if member.id == ctx.author.id:
+            await ctx.respond(
+                "❌ You cannot pay yourself."
+            )
+            return
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Make sure both users exist.
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO economy (
+                user_id,
+                guild_id,
+                coins
+            )
+            VALUES (?, ?, 0)
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO economy (
+                user_id,
+                guild_id,
+                coins
+            )
+            VALUES (?, ?, 0)
+            """,
+            (member.id, ctx.guild.id)
+        )
+
+        cursor.execute(
+            """
+            SELECT coins
+            FROM economy
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        sender = cursor.fetchone()
+
+        if sender["coins"] < amount:
+            conn.close()
+
+            await ctx.respond(
+                "❌ You don't have enough coins."
+            )
+            return
+
+        cursor.execute(
+            """
+            UPDATE economy
+            SET coins = coins - ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (
+                amount,
+                ctx.author.id,
+                ctx.guild.id
+            )
+        )
+
+        cursor.execute(
+            """
+            UPDATE economy
+            SET coins = coins + ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (
+                amount,
+                member.id,
+                ctx.guild.id
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        await ctx.respond(
+            f"💸 {ctx.author.mention} paid "
+            f"**{amount} coins** to {member.mention}."
+        )
+
+    # =========================
+    # INVENTORY
+    # =========================
+
+    @discord.slash_command(
+        name="inventory",
+        description="View your inventory"
+    )
+    async def inventory(self, ctx):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Normal items
+        cursor.execute(
+            """
+            SELECT item, quantity
+            FROM inventory
+            WHERE user_id = ? AND guild_id = ?
+            ORDER BY item
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        inventory_items = cursor.fetchall()
+
+        # Pets
+        cursor.execute(
+            """
+            SELECT pet, equipped
+            FROM pets
+            WHERE user_id = ? AND guild_id = ?
+            ORDER BY pet
+            """,
+            (ctx.author.id, ctx.guild.id)
+        )
+
+        pets = cursor.fetchall()
 
         conn.close()
-        
-        if not items:
-            return await ctx.response.send_message("📦 You don't have any items in your inventory yet! Buy some at `/shop`.", ephemeral=True)
-        
-        embed = discord.Embed(title="🎒 Your Inventory", color=discord.Color.blue())
-        item_list = "\n".join([f"• {row[0]}" for row in items])
 
-        embed.add_field(name="Items", value=item_list, inline=False)
+        embed = discord.Embed(
+            title=f"🎒 {ctx.author.display_name}'s Inventory",
+            color=discord.Color.blurple()
+        )
 
-        await ctx.response.send_message(embed=embed)
+        # =========================
+        # PETS
+        # =========================
+
+        if pets:
+            pet_lines = []
+
+            for pet in pets:
+                item_data = next(
+                    (
+                        shop_item
+                        for shop_item in shop_items
+                        if shop_item["tag"] == pet["pet"]
+                    ),
+                    None
+                )
+
+                if item_data is None:
+                    pet_name = pet["pet"]
+                    emoji = "🐾"
+                else:
+                    pet_name = item_data["name"]
+                    emoji = item_data["emoji"]
+
+                equipped = " — Equipped" if pet["equipped"] else ""
+
+                pet_lines.append(
+                    f"{emoji} **{pet_name}**{equipped}"
+                )
+
+            embed.add_field(
+                name="🐾 Pets",
+                value="\n".join(pet_lines),
+                inline=False
+            )
+
+        # =========================
+        # ITEMS
+        # =========================
+
+        if inventory_items:
+            item_lines = []
+
+            for inventory_item in inventory_items:
+                item_data = next(
+                    (
+                        shop_item
+                        for shop_item in shop_items
+                        if shop_item["tag"] == inventory_item["item"]
+                    ),
+                    None
+                )
+
+                if item_data is None:
+                    name = inventory_item["item"]
+                    emoji = "📦"
+                else:
+                    name = item_data["name"]
+                    emoji = item_data["emoji"]
+
+                item_lines.append(
+                    f"{emoji} **{name}** ×{inventory_item['quantity']}"
+                )
+
+            embed.add_field(
+                name="📦 Items",
+                value="\n".join(item_lines),
+                inline=False
+            )
+
+        if not pets and not inventory_items:
+            embed.description = "Your inventory is empty."
+
+        await ctx.respond(embed=embed)
+
+    # =========================
+    # USE ITEM
+    # =========================
+
+    @discord.slash_command(
+        name="use",
+        description="Use an item from your inventory"
+    )
+    async def use(self, ctx, item: str):
+        item_data = next(
+            (
+                shop_item
+                for shop_item in shop_items
+                if shop_item["tag"] == item
+            ),
+            None
+        )
+
+        if item_data is None:
+            await ctx.respond("❌ Item not found.")
+            return
+
+        if item_data["type"] != "booster":
+            await ctx.respond(
+                f'❌ **{item_data["name"]}** cannot be used.'
+            )
+            return
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check inventory quantity.
+        cursor.execute(
+            """
+            SELECT quantity
+            FROM inventory
+            WHERE user_id = ?
+              AND guild_id = ?
+              AND item = ?
+            """,
+            (
+                ctx.author.id,
+                ctx.guild.id,
+                item_data["tag"]
+            )
+        )
+
+        inventory_item = cursor.fetchone()
+
+        if inventory_item is None or inventory_item["quantity"] <= 0:
+            conn.close()
+
+            await ctx.respond(
+                f'❌ You do not have **{item_data["name"]}**.'
+            )
+            return
+
+        # Consume one item.
+        if inventory_item["quantity"] == 1:
+            cursor.execute(
+                """
+                DELETE FROM inventory
+                WHERE user_id = ?
+                  AND guild_id = ?
+                  AND item = ?
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    item_data["tag"]
+                )
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE inventory
+                SET quantity = quantity - 1
+                WHERE user_id = ?
+                  AND guild_id = ?
+                  AND item = ?
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    item_data["tag"]
+                )
+            )
+
+        now = datetime.now()
+
+        # =========================
+        # APPLY EACH EFFECT
+        # =========================
+
+        for effect, new_multiplier in item_data["effects"].items():
+            new_duration = item_data["duration"]
+
+            cursor.execute(
+                """
+                SELECT multiplier, expires_at
+                FROM active_boosters
+                WHERE user_id = ?
+                  AND guild_id = ?
+                  AND effect = ?
+                """,
+                (
+                    ctx.author.id,
+                    ctx.guild.id,
+                    effect
+                )
+            )
+
+            active_booster = cursor.fetchone()
+
+            if active_booster:
+                expires_at = datetime.fromisoformat(
+                    active_booster["expires_at"]
+                )
+
+                # If the old booster expired, its remaining
+                # duration is zero.
+                remaining = max(
+                    timedelta(0),
+                    expires_at - now
+                )
+
+                total_duration = remaining + timedelta(
+                    seconds=new_duration
+                )
+
+                multiplier = max(
+                    active_booster["multiplier"],
+                    new_multiplier
+                )
+
+                new_expires_at = now + total_duration
+
+                cursor.execute(
+                    """
+                    UPDATE active_boosters
+                    SET multiplier = ?,
+                        expires_at = ?
+                    WHERE user_id = ?
+                      AND guild_id = ?
+                      AND effect = ?
+                    """,
+                    (
+                        multiplier,
+                        new_expires_at.isoformat(),
+                        ctx.author.id,
+                        ctx.guild.id,
+                        effect
+                    )
+                )
+
+            else:
+                expires_at = now + timedelta(
+                    seconds=new_duration
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO active_boosters (
+                        user_id,
+                        guild_id,
+                        effect,
+                        multiplier,
+                        expires_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ctx.author.id,
+                        ctx.guild.id,
+                        effect,
+                        new_multiplier,
+                        expires_at.isoformat()
+                    )
+                )
+
+        conn.commit()
+        conn.close()
+
+        await ctx.respond(
+            f'⚡ You activated **{item_data["name"]}**!'
+        )
 
 
 def setup(bot):
