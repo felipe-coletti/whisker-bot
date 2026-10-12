@@ -96,8 +96,8 @@ Reaching a new level pays **500 × the new level** in coins, so reaching level 3
 ### 2. Install
 
 ```bash
-git clone https://github.com/felipe-coletti/whisker-bot.git
-cd whisker-bot
+git clone <repository-url>
+cd <folder-name>
 
 python -m venv .venv
 source .venv/bin/activate   # On Windows: .venv\Scripts\activate
